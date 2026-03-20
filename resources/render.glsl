@@ -2,13 +2,11 @@
 #version 450
 
 struct Boid {
-	vec4 position;
-	vec4 forward;
-	vec4 velocity;
-	vec4 acceleration;
-	vec4 avg_flock_heading;
-	vec4 avg_avoidance;
-	vec4 center_of_flockmates;
+    vec4 position;
+    vec4 forward;
+    vec4 next_forward;
+    vec4 velocity;
+    vec4 acceleration;
 };
 
 layout(location = 0) in vec3 in_position;
