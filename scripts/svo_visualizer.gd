@@ -11,17 +11,17 @@ func _ready() -> void:
 		push_error("Missing SVO")
 		return
 	var binary_path: String = svo.out_data.path_join("svo.bin")
-	var meta_path: String = svo.out_data.path_join("svo.json")
-	var meta_file: FileAccess = FileAccess.open(meta_path, FileAccess.READ)
-	if meta_file == null:
-		push_error("Failed to open SVO %s" % meta_path)
+	var metadata_path: String = svo.out_data.path_join("svo.json")
+	var metadata_file: FileAccess = FileAccess.open(metadata_path, FileAccess.READ)
+	if metadata_file == null:
+		push_error("Failed to open SVO %s" % metadata_path)
 		return
-	var meta : Dictionary = JSON.parse_string(meta_file.get_as_text())
-	meta_file.close()
-	var root_min: Vector3 = Vector3(meta.root_min_x, meta.root_min_y, meta.root_min_z)
-	var root_size: float = float(meta.root_size)
-	var _max_depth: int = int(meta.max_depth)
-	var node_count: int = int(meta.node_count)
+	var metadata : Dictionary = JSON.parse_string(metadata_file.get_as_text())
+	metadata_file.close()
+	var root_min: Vector3 = Vector3(metadata.root_min_x, metadata.root_min_y, metadata.root_min_z)
+	var root_size: float = float(metadata.root_size)
+	var _max_depth: int = int(metadata.max_depth)
+	var node_count: int = int(metadata.node_count)
 	var binary_file: FileAccess = FileAccess.open(binary_path, FileAccess.READ)
 	if binary_file == null:
 		push_error("Failed to open SVO %s" % binary_path)

@@ -36,7 +36,8 @@ func _render_init() -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_PREDELETE:
 		for rid in [_vertex_buffer, _pipeline, _shader, _uniform_set]:
-			if rid.is_valid(): _device.free_rid(rid)
+			if rid.is_valid():
+				_device.free_rid(rid)
 
 func _render_callback(_effect_callback_type: int, render_data: RenderData) -> void:
 	var render_scene_buffers: RenderSceneBuffers = render_data.get_render_scene_buffers()

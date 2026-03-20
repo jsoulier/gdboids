@@ -43,7 +43,7 @@ func _run_build() -> void:
 	print("Collected %d nodes" % _nodes.size())
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(out_data))
 	_export_binary()
-	_export_meta()
+	_export_metadata()
 	if Engine.is_editor_hint():
 		EditorInterface.get_resource_filesystem().scan()
 	print("Built SVO for %s" % scene.name)
@@ -112,8 +112,8 @@ func _export_binary() -> void:
 			file.store_32(value)
 	file.close()
 
-func _export_meta() -> void:
-	var meta: Dictionary = {
+func _export_metadata() -> void:
+	var metadata: Dictionary = {
 		"root_min_x": _origin.x,
 		"root_min_y": _origin.y,
 		"root_min_z": _origin.z,
@@ -126,5 +126,5 @@ func _export_meta() -> void:
 	if file == null:
 		push_error("Failed to write to %s" % path)
 		return
-	file.store_string(JSON.stringify(meta, "\t"))
+	file.store_string(JSON.stringify(metadata, "\t"))
 	file.close()

@@ -3,6 +3,7 @@ class_name Boids extends Node3D
 static var SCAN_SHADER: RDShaderFile = preload("res://resources/scan.glsl")
 static var UPDATE_SHADER: RDShaderFile = preload("res://resources/update.glsl")
 
+@export var svo: SVO = null
 @export var boid_count: int = 100
 @export var view_radius: float = 5.0
 @export var avoid_radius: float = 2.0
@@ -13,15 +14,18 @@ static var UPDATE_SHADER: RDShaderFile = preload("res://resources/update.glsl")
 @export var cohesion_weight: float = 1.0
 @export var separate_weight: float = 1.5
 @export var forward_weight: float = 0.5
+@export var sensor_length: float = 0.2
 
 var _device: RenderingDevice = null
 var _boid_buffer: RID
+var _svo_buffer: RID
 var _scan_shader: RID
 var _scan_pipeline: RID
 var _scan_uniform_set: RID
 var _update_shader: RID
 var _update_pipeline: RID
 var _update_uniform_set: RID
+var _svo_metadata: Dictionary = {}
 
 func _ready() -> void:
 	_device = RenderingServer.get_rendering_device()
@@ -41,16 +45,35 @@ func _ready() -> void:
 		boid_data[base + 6] = forward.z
 		boid_data[base + 7] = 0.0
 	_boid_buffer = _device.storage_buffer_create(boid_data.size() * 4, boid_data.to_byte_array())
+	var binary_path: String = svo.out_data.path_join("svo.bin")
+	var binary_file: FileAccess = FileAccess.open(binary_path, FileAccess.READ)
+	if binary_file == null:
+		push_error("Failed to open SVO binary: %s" % binary_path)
+		return RID()
+	var bytes: PackedByteArray = binary_file.get_buffer(binary_file.get_length())
+	binary_file.close()
+	var metadata_path: String = svo.out_data.path_join("svo.json")
+	var metadata_file: FileAccess = FileAccess.open(metadata_path, FileAccess.READ)
+	if metadata_file == null:
+		push_error("Failed to open SVO metadata: %s" % metadata_path)
+		return RID()
+	_svo_metadata = JSON.parse_string(metadata_file.get_as_text())
+	metadata_file.close()
+	_svo_buffer = _device.storage_buffer_create(bytes.size(), bytes)
 	_scan_shader = _device.shader_create_from_spirv(SCAN_SHADER.get_spirv())
 	_scan_pipeline = _device.compute_pipeline_create(_scan_shader)
 	_update_shader = _device.shader_create_from_spirv(UPDATE_SHADER.get_spirv())
 	_update_pipeline = _device.compute_pipeline_create(_update_shader)
-	var uniform: RDUniform = RDUniform.new()
-	uniform.uniform_type  = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
-	uniform.binding = 0
-	uniform.add_id(_boid_buffer)
-	_scan_uniform_set = _device.uniform_set_create([uniform], _scan_shader, 0)
-	_update_uniform_set = _device.uniform_set_create([uniform], _update_shader, 0)
+	var boid_uniform: RDUniform = RDUniform.new()
+	boid_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	boid_uniform.binding = 0
+	boid_uniform.add_id(_boid_buffer)
+	var svo_uniform: RDUniform = RDUniform.new()
+	svo_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	svo_uniform.binding = 1
+	svo_uniform.add_id(_svo_buffer)
+	_scan_uniform_set = _device.uniform_set_create([boid_uniform, svo_uniform], _scan_shader, 0)
+	_update_uniform_set = _device.uniform_set_create([boid_uniform], _update_shader, 0)
 	var effect: BoidsEffect = BoidsEffect.new()
 	effect.boids = self
 	var compositor: Compositor = Compositor.new()
@@ -62,11 +85,12 @@ func _notification(what: int) -> void:
 	if what == NOTIFICATION_PREDELETE:
 		for rid in [_boid_buffer, _scan_pipeline, _scan_shader, _scan_uniform_set, \
 				_update_pipeline, _update_shader, _update_uniform_set]:
-			if rid.is_valid(): _device.free_rid(rid)
+			if rid.is_valid():
+				_device.free_rid(rid)
 
 func _process(delta: float) -> void:
 	var push: PackedFloat32Array = PackedFloat32Array()
-	push.resize(12)
+	push.resize(20)
 	push[0] = float(boid_count)
 	push[1] = view_radius
 	push[2] = avoid_radius
@@ -78,7 +102,15 @@ func _process(delta: float) -> void:
 	push[8] = separate_weight
 	push[9] = delta
 	push[10] = forward_weight
-	push[11] = 0.0
+	push[11] = float(_svo_metadata.root_min_x)
+	push[12] = float(_svo_metadata.root_min_y)
+	push[13] = float(_svo_metadata.root_min_z)
+	push[14] = float(_svo_metadata.root_size)
+	push[15] = float(_svo_metadata.max_depth)
+	push[16] = sensor_length
+	push[17] = 0.0
+	push[18] = 0.0
+	push[19] = 0.0
 	@warning_ignore("integer_division")
 	var group_count = (boid_count + 1023) / 1024
 	var compute_list: int = _device.compute_list_begin()
