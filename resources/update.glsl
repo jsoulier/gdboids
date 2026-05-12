@@ -43,8 +43,7 @@ layout(push_constant, std430) uniform Params {
 
 void main() {
     int id = int(gl_GlobalInvocationID.x);
-    if (id >= int(params.num_boids))
-    {
+    if (id >= int(params.num_boids)) {
         return;
     }
     boids[id].position += boids[id].velocity * params.delta_time;
