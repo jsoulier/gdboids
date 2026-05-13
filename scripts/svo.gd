@@ -1,27 +1,50 @@
 @tool class_name SVO extends Node3D
 
+static var EMPTY: int = -1
+static var SOLID: int = -2
+static var DEBUG_COLOR: Color = Color(0.2, 0.8, 0.4, 1.0)
+
 @export var scene: Node3D = null
-@export_range(1, 12) var max_depth: int = 7
+@export_range(1, 12) var max_build_depth: int = 7
+@export_range(1, 12) var debug_depth: int = 10
 @export_dir var out_data: String = "res://data/"
-@export var run_build_on_ready: bool = false
-@export var run_build: bool = false:
-	set(value):
-		if value and Engine.is_editor_hint():
-			run_build = false
-			_run_build()
 
 var _nodes: Array = []
 var _origin: Vector3 = Vector3.ZERO
 var _size: float = 1.0
+var _debug_lines: Array[Array] = []
+
+func _new_node() -> int:
+	var index: int = _nodes.size()
+	_nodes.append([EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY])
+	return index
+
+func _enter_tree() -> void:
+	if Engine.is_editor_hint():
+		var palette = EditorInterface.get_command_palette()
+		palette.add_command("SVO: Build", "svo/build", _build)
+
+func _exit_tree() -> void:
+	if Engine.is_editor_hint():
+		var palette = EditorInterface.get_command_palette()
+		palette.remove_command("svo/build")
 
 func _ready() -> void:
-	if run_build_on_ready:
-		_run_build()
+	_get_debug_lines()
 
-func _run_build() -> void:
+func _process(_delta: float) -> void:
+	if not visible:
+		return
+	if debug_depth >= _debug_lines.size():
+		return
+	var level: Array = _debug_lines[debug_depth]
+	for i in range(level.size() / 2):
+		DebugDraw3D.draw_line(level[i * 2], level[i * 2 + 1], DEBUG_COLOR)
+
+func _build() -> void:
 	print("Building SVO for %s" % scene.name)
 	var aabbs: Array[AABB] = []
-	_collect_aabbs(scene, Transform3D.IDENTITY, aabbs)
+	_get_aabbs(scene, Transform3D.IDENTITY, aabbs)
 	if aabbs.is_empty():
 		push_error("Failed to collect any AABBs for %s" % scene.name)
 		return
@@ -47,8 +70,9 @@ func _run_build() -> void:
 	if Engine.is_editor_hint():
 		EditorInterface.get_resource_filesystem().scan()
 	print("Built SVO for %s" % scene.name)
+	_get_debug_lines()
 
-func _collect_aabbs(node: Node, xform: Transform3D, out: Array[AABB]) -> void:
+func _get_aabbs(node: Node, xform: Transform3D, out: Array[AABB]) -> void:
 	if node is Node3D:
 		xform = xform * (node as Node3D).transform
 	if node is MeshInstance3D:
@@ -56,20 +80,15 @@ func _collect_aabbs(node: Node, xform: Transform3D, out: Array[AABB]) -> void:
 		if mesh:
 			out.append(xform * mesh.get_aabb())
 	for child in node.get_children():
-		_collect_aabbs(child, xform, out)
-
-func _new_node() -> int:
-	var index: int = _nodes.size()
-	_nodes.append([-1, -1, -1, -1, -1, -1, -1, -1])
-	return index
+		_get_aabbs(child, xform, out)
 
 func _subdivide(aabbs: Array[AABB], index: int, _min: Vector3, size: float, depth: int) -> void:
 	var half: float = size * 0.5
-	for ci in range(8):
+	for slot in range(8):
 		var child_min: Vector3 = _min + Vector3(
-			half if (ci & 1) else 0.0,
-			half if (ci & 2) else 0.0,
-			half if (ci & 4) else 0.0)
+			half if (slot & 1) else 0.0,
+			half if (slot & 2) else 0.0,
+			half if (slot & 4) else 0.0)
 		var child_max: Vector3 = child_min + Vector3(half, half, half)
 		var cell: AABB = AABB(child_min, child_max - child_min)
 		var _aabbs: Array[AABB] = []
@@ -80,26 +99,23 @@ func _subdivide(aabbs: Array[AABB], index: int, _min: Vector3, size: float, dept
 				break
 			if aabb.intersects(cell):
 				_aabbs.append(aabb)
-		# Solid leaf
 		if is_solid:
-			_nodes[index][ci] = -2
+			_nodes[index][slot] = SOLID
 			continue
-		# Empty leaf
 		if _aabbs.is_empty():
 			continue
-		# Solid leaf at max depth
-		if depth == max_depth - 1:
-			_nodes[index][ci] = -2
+		if depth == max_build_depth - 1:
+			_nodes[index][slot] = SOLID
 			continue
 		var child_index: int = _new_node()
-		_nodes[index][ci] = child_index
+		_nodes[index][slot] = child_index
 		_subdivide(_aabbs, child_index, child_min, half, depth + 1)
 		is_solid = true
-		for v in _nodes[child_index]:
-			if v != -2:
+		for node in _nodes[child_index]:
+			if node != SOLID:
 				is_solid = false
 		if is_solid:
-			_nodes[index][ci] = -2
+			_nodes[index][slot] = SOLID
 
 func _export_binary() -> void:
 	var path: String = ProjectSettings.globalize_path(out_data.path_join("svo.bin"))
@@ -118,7 +134,7 @@ func _export_metadata() -> void:
 		"root_min_y": _origin.y,
 		"root_min_z": _origin.z,
 		"root_size": _size,
-		"max_depth": max_depth,
+		"max_build_depth": max_build_depth,
 		"node_count": _nodes.size(),
 	}
 	var path: String = ProjectSettings.globalize_path(out_data.path_join("svo.json"))
@@ -128,3 +144,83 @@ func _export_metadata() -> void:
 		return
 	file.store_string(JSON.stringify(metadata, "\t"))
 	file.close()
+
+func get_binary() -> PackedByteArray:
+	var path: String = out_data.path_join("svo.bin")
+	if not FileAccess.file_exists(path):
+		return PackedByteArray()
+	var file: FileAccess = FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return PackedByteArray()
+	var data: PackedByteArray = file.get_buffer(file.get_length())
+	file.close()
+	return data
+
+func get_metadata() -> Dictionary:
+	var path: String = out_data.path_join("svo.json")
+	if not FileAccess.file_exists(path):
+		return {}
+	var file: FileAccess = FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return {}
+	var content: String = file.get_as_text()
+	file.close()
+	return JSON.parse_string(content)
+
+func _get_debug_lines() -> void:
+	var metadata: Dictionary = get_metadata()
+	if metadata.is_empty():
+		return
+	var bytes: PackedByteArray = get_binary()
+	if bytes.is_empty():
+		return
+	var root_min: Vector3 = Vector3(metadata.root_min_x, metadata.root_min_y, metadata.root_min_z)
+	var root_size: float = float(metadata.root_size)
+	var max_depth: int = int(metadata.max_build_depth)
+	var nodes: PackedInt32Array = bytes.to_int32_array()
+	_debug_lines.resize(max_depth + 1)
+	for depth in range(max_depth + 1):
+		_debug_lines[depth] = []
+	var stack: Array = [[0, root_min, root_size, 0]]
+	while not stack.is_empty():
+		var element: Array = stack.pop_back()
+		var index: int = element[0]
+		var _min: Vector3 = element[1]
+		var size: float = element[2]
+		var depth: int = element[3]
+		if depth == 0:
+			_add_debug_box(_min, _min + Vector3(size, size, size), 0)
+		var half: float = size * 0.5
+		for slot in range(8):
+			var child_index: int = nodes[index * 8 + slot]
+			if child_index == EMPTY:
+				continue
+			var child_min: Vector3 = _min + Vector3(
+				half if (slot & 1) else 0.0,
+				half if (slot & 2) else 0.0,
+				half if (slot & 4) else 0.0)
+			_add_debug_box(child_min, child_min + Vector3(half, half, half), depth + 1)
+			if child_index != SOLID and depth + 1 < max_depth:
+				stack.push_back([child_index, child_min, half, depth + 1])
+
+func _add_debug_box(bmin: Vector3, bmax: Vector3, depth: int) -> void:
+	if depth >= _debug_lines.size():
+		return
+	var cell: Array[Vector3] = [
+		Vector3(bmin.x, bmin.y, bmin.z),
+		Vector3(bmax.x, bmin.y, bmin.z),
+		Vector3(bmax.x, bmax.y, bmin.z),
+		Vector3(bmin.x, bmax.y, bmin.z),
+		Vector3(bmin.x, bmin.y, bmax.z),
+		Vector3(bmax.x, bmin.y, bmax.z),
+		Vector3(bmax.x, bmax.y, bmax.z),
+		Vector3(bmin.x, bmax.y, bmax.z),
+	]
+	const EDGES = [
+		[0,1],[1,2],[2,3],[3,0],
+		[4,5],[5,6],[6,7],[7,4],
+		[0,4],[1,5],[2,6],[3,7]
+	]
+	for edge in EDGES:
+		_debug_lines[depth].append(cell[edge[0]])
+		_debug_lines[depth].append(cell[edge[1]])
